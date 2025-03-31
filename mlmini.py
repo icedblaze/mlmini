@@ -23,6 +23,15 @@ for line in text_telugu:
   list_text_telugu.append(line)
 y_train_telugu.value_counts()
 
+import numpy as np
+
+if isinstance(y_train_telugu, pd.DataFrame):  
+    y_train_telugu = y_train_telugu.squeeze()  # Convert DataFrame to Series
+
+x_train_telugu = np.array(x_train_telugu)
+y_train_telugu = np.array(y_train_telugu)
+
+
 #vectorization training data
 from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
@@ -31,6 +40,15 @@ x_train_telugu = Vectorizer.fit_transform(list_text_telugu)
 feature_name_telugu = Vectorizer.get_feature_names_out()
 print(feature_name_telugu[:20])
 print(x_train_telugu.toarray())
+
+from imblearn.over_sampling import SMOTE
+from collections import Counter
+
+smote = SMOTE(sampling_strategy='auto', random_state=42)
+x_train_telugu, y_train_telugu = smote.fit_resample(x_train_telugu, y_train_telugu)
+
+print("After SMOTE:", Counter(y_train_telugu))  # Check new distribution
+
 
 **SVM MODEL**
 
@@ -150,92 +168,50 @@ test_telugu_main_3['pid'] = test_telugu['TEXT DATA']
 test_telugu_main_3['class_label'] = test_telugu['LABEL']
 test_telugu_main_3.to_csv(r'/content/drive/MyDrive/Colab Notebooks/Wit_HUB_StressIdent_LT-EDI@EACL2024_run3.csv', index = False)
 
-from sklearn.decomposition import PCA
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from sklearn.naive_bayes import GaussianNB
-from sklearn.feature_selection import SelectKBest, chi2
-from sklearn.metrics import accuracy_score, classification_report, f1_score
-import numpy as np
+from sklearn.ensemble import BaggingClassifier, VotingClassifier, StackingClassifier, AdaBoostClassifier
+from sklearn.pipeline import make_pipeline
 
 # Apply Dimensionality Reduction using PCA
-pca = PCA(n_components=100)  # Choose the right number of components based on explained variance
+pca = PCA(n_components=100)
 x_train_pca = pca.fit_transform(x_train_telugu.toarray())
 X_dev_pca = pca.transform(X_dev_telugu.toarray())
 
-# Hyperparameter tuning for SVM
-svm_params = {'C': [0.1, 1, 10], 'kernel': ['linear', 'rbf'], 'gamma': ['scale', 'auto']}
-svm_grid = GridSearchCV(SVC(), svm_params, cv=5, scoring='f1_macro', n_jobs=-1)
-svm_grid.fit(x_train_pca, y_train_telugu)
+# Train optimized SVM model using Bagging
+svm_bagging = BaggingClassifier(estimator=svm_best, n_estimators=10, random_state=42, n_jobs=-1)
+svm_bagging.fit(x_train_pca, y_train_telugu)
 
-# Train optimized SVM model
-svm_best = svm_grid.best_estimator_
-y_pred_svm_opt = svm_best.predict(X_dev_pca)
-print(f"Optimized SVM Accuracy: {accuracy_score(Y_dev_telugu, y_pred_svm_opt)}")
-print(f"Optimized SVM F1-score: {f1_score(Y_dev_telugu, y_pred_svm_opt, average='macro')}")
-print("\nClassification Report:")
-print(classification_report(Y_dev_telugu, y_pred_svm_opt))
+# Predict with Bagging SVM
+y_pred_svm_bagging = svm_bagging.predict(X_dev_pca)
 
-# Hyperparameter tuning for Random Forest
-rf_params = {'n_estimators': [100, 200, 500], 'max_depth': [10, 20, None]}
-rf_grid = RandomizedSearchCV(RandomForestClassifier(), rf_params, cv=5, scoring='f1_macro', n_jobs=-1)
-rf_grid.fit(x_train_pca, y_train_telugu)
+# Train optimized RF model using AdaBoost
+rf_adaboost = AdaBoostClassifier(estimator=rf_best, n_estimators=50, random_state=42)
+rf_adaboost.fit(x_train_pca, y_train_telugu)
 
-# Train optimized Random Forest model
-rf_best = rf_grid.best_estimator_
-y_pred_rf_opt = rf_best.predict(X_dev_pca)
-print(f"Optimized RF Accuracy: {accuracy_score(Y_dev_telugu, y_pred_rf_opt)}")
-print(f"Optimized RF F1-score: {f1_score(Y_dev_telugu, y_pred_rf_opt, average='macro')}")
-print("\nClassification Report:")
-print(classification_report(Y_dev_telugu, y_pred_rf_opt))
+# Predict with AdaBoost RF
+y_pred_rf_adaboost = rf_adaboost.predict(X_dev_pca)
 
-# Compare pre- and post-optimization results in a table
+
+
+# Print results
+print(f"Bagging SVM Accuracy: {accuracy_score(Y_dev_telugu, y_pred_svm_bagging)}")
+print(f"Bagging SVM F1-score: {f1_score(Y_dev_telugu, y_pred_svm_bagging, average='macro')}\n")
+
+print(f"AdaBoost RF Accuracy: {accuracy_score(Y_dev_telugu, y_pred_rf_adaboost)}")
+print(f"AdaBoost RF F1-score: {f1_score(Y_dev_telugu, y_pred_rf_adaboost, average='macro')}\n")
+
+
+# Compare ensemble methods in a table
 comparison_table = {
-    "Model": ["SVM", "Random Forest"],
-    "Before Tuning F1": [f1_score_tamil, f1_score_tamil_3],
-    "After Tuning F1": [
-        f1_score(Y_dev_telugu, y_pred_svm_opt, average='macro'),
-        f1_score(Y_dev_telugu, y_pred_rf_opt, average='macro'),
+    "Model": ["Bagging SVM", "AdaBoost RF"],
+    "Accuracy": [
+        accuracy_score(Y_dev_telugu, y_pred_svm_bagging),
+        accuracy_score(Y_dev_telugu, y_pred_rf_adaboost)
     ],
-    "Before Tuning Accuracy": [accuracy_telugu_svm, accuracy_telugu_rand],
-    "After Tuning Accuracy": [
-        accuracy_score(Y_dev_telugu, y_pred_svm_opt),
-        accuracy_score(Y_dev_telugu, y_pred_rf_opt),
+    "F1-score": [
+        f1_score(Y_dev_telugu, y_pred_svm_bagging, average='macro'),
+        f1_score(Y_dev_telugu, y_pred_rf_adaboost, average='macro')
     ],
 }
 
 import pandas as pd
 print(pd.DataFrame(comparison_table))
-
-
-from sklearn.preprocessing import LabelEncoder
-
-# Initialize LabelEncoder
-label_encoder = LabelEncoder()
-
-# Convert categorical labels to numerical values
-y_train_telugu = label_encoder.fit_transform(y_train_telugu)  # 'Non stressed' -> 0, 'stressed' -> 1
-Y_dev_telugu = label_encoder.transform(Y_dev_telugu)  # Apply the same transformation to dev data
-
-# Now train XGBoost
-from xgboost import XGBClassifier
-xgb_clf = XGBClassifier(n_estimators=300, max_depth=6, learning_rate=0.1)
-xgb_clf.fit(x_train_telugu, y_train_telugu)
-
-# Predict on development data
-y_pred_xgb = xgb_clf.predict(X_dev_telugu)
-
-# Convert predictions back to original labels if needed
-y_pred_xgb_labels = label_encoder.inverse_transform(y_pred_xgb)
-
-# Evaluate performance
-from sklearn.metrics import accuracy_score, classification_report, f1_score
-
-accuracy_xgb = accuracy_score(Y_dev_telugu, y_pred_xgb)
-f1_xgb = f1_score(Y_dev_telugu, y_pred_xgb, average='macro')
-
-print(f"XGBoost Accuracy: {accuracy_xgb}")
-print(f"XGBoost F1-score: {f1_xgb}")
-print("\nClassification Report:")
-print(classification_report(Y_dev_telugu, y_pred_xgb))
